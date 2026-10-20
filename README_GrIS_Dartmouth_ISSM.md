@@ -104,7 +104,7 @@
 
 **Describe how the ice-covered area was determined.** Were glaciers removed from the periphery? What is the target ice mask of the model, if any? How is the constraint enforced (e.g., during runtime per negative SMB, as a hard mask, or in postprocessing)?
 
->The domain includes peripheral glaciers. Ice covered area is determined from the ice levelset.
+>The domain includes peripheral glaciers in the thickness map, but dynamical updates, ice area calculations, and ice volume calculations are only computed within the ice levelset, which was modified at the beginning of the runs to exclude peripheral ice.
 
 **Do you plan to participate in the Perturbed Parameter Ensemble (PPE) and/or Earth System Model experiments (ESM)?** Which experiments do you plan to participate in and how many experiments do you plan to perform?
 
