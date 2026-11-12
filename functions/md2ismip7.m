@@ -439,9 +439,9 @@ function results=md2ismip7(md,directoryname,source_id,ism_id,ism_member_id,forci
 	%           (non-historical only - stays fill value for historical/prescribed-front runs).
 	results.ligroundf  = NaN(numel(results.gridx),numel(results.gridy),length(results.timegrid));
 	results.lifmassbf  = NaN(numel(results.gridx),numel(results.gridy),length(results.timegrid));
-	%libmassbfgr: set below (0 under grounded ice - this model has no grounded-ice basal
-	%melt/refreeze - fill value elsewhere) once sftgrf is available.
-	results.libmassbfgr= NaN(numel(results.gridx),numel(results.gridy),length(results.timegrid));
+	%libmassbfgr: this model has no grounded-ice basal melt/refreeze, and the data request's
+	%fill_policy for libmassbfgr is 'forbidden' (no missing values anywhere), so it is 0 everywhere.
+	results.libmassbfgr= zeros(numel(results.gridx),numel(results.gridy),length(results.timegrid));
 
 	%Accumulator for the "exceeds 1e6 Pa checker cap" drag warning: rather than firing a
 	%warning every time this happens (it can trigger on many vertices in many timesteps for a
@@ -603,15 +603,18 @@ function results=md2ismip7(md,directoryname,source_id,ism_id,ism_member_id,forci
 			meltfl = zeros(md.mesh.numberofvertices,1);   %floating basal melt not saved - treated as 0
 		end
 		bmb=interp_quiet(md.mesh.elements,md.mesh.x,md.mesh.y,meltfl,xgrid,ygrid,NaN);
-		%libmassbffl's fill policy (no_floating_ice) requires missing (not 0) everywhere
-		%that is NOT floating ice - that's wherever sftflf will end up 0, i.e. grounded ice
-		%OR no ice at all. Masking only on groundedice==1 missed the ice-free case (cells the
-		%raw ocean levelset happens to sign "floating" even though there is no ice there),
-		%which is what the checker's "holds a value where sftflf is 0" error was catching.
+		%libmassbffl's fill_policy is 'forbidden' (no missing values anywhere): the basal mass
+		%balance flux beneath floating ice is 0 wherever there is no floating ice (grounded
+		%ice or ice-free), and also wherever interp_quiet returned NaN (grid points outside
+		%the mesh footprint).
 		bmbval=-(transpose(bmb)*md.materials.rho_ice/md.constants.yts);
-		bmbval(transpose(floatingice.*mask)==0)=NaN;
+		bmbval(transpose(floatingice.*mask)==0)=0;
+		bmbval(isnan(bmbval))=0;
 		results.bmb(:,:,i)=bmbval;
 		smb=interp_quiet(md.mesh.elements,md.mesh.x,md.mesh.y,smb_sum/nb,xgrid,ygrid,NaN);
+		%acabf's fill_policy is 'forbidden': grid points outside the mesh footprint (NaN from
+		%interp_quiet) get 0 surface mass balance flux rather than a missing value.
+		smb(isnan(smb))=0;
 		results.smb(:,:,i)=transpose(smb)*md.materials.rho_ice/md.constants.yts;
 	end
 
@@ -652,12 +655,12 @@ function results=md2ismip7(md,directoryname,source_id,ism_id,ism_member_id,forci
 	results.surface(fullygrounded) = results.base(fullygrounded) + results.thickness(fullygrounded);
 
 	%libmassbfgr: this model does not simulate basal melt/refreeze under grounded ice, so
-	%the value is a genuine physical 0 (not a missing computation) everywhere grounded ice
-	%is present - consistent with tendlibmassbfgr above, which is computed from
-	%TotalGroundedBmbScaled and expected to come out ~0 for the same reason. Left at fill
-	%outside grounded ice (floating ice or ice-free), consistent with libmassbffl covering
-	%the floating regime instead and the fill_policy for cells where neither applies.
-	results.libmassbfgr(results.sftgrf>0) = 0;
+	%the value is a genuine physical 0 (not a missing computation) - consistent with
+	%tendlibmassbfgr above, which is computed from TotalGroundedBmbScaled and expected to
+	%come out ~0 for the same reason. The data request's fill_policy for libmassbfgr is
+	%'forbidden' (no missing values anywhere, including outside grounded ice), so it is 0
+	%everywhere; it was initialised to zeros above, this just guards against any NaN.
+	results.libmassbfgr(isnan(results.libmassbfgr)) = 0;
 
 	%Data-request fill policies the generic NaN handling in write_gridded_var
 	%doesn't know about:
@@ -706,7 +709,8 @@ function results=md2ismip7(md,directoryname,source_id,ism_id,ism_member_id,forci
 	%  zero_outside_ice=true: data-request fill_policy is 'forbidden' - the
 	%    variable must be 0 (not fill) wherever there is no ice, so NaN there is
 	%    written as 0. Applies to the mask fractions themselves and to lithk /
-	%    dlithkdt (fill_policy=forbidden per the data request).
+	%    dlithkdt, acabf, libmassbfgr and libmassbffl (fill_policy=forbidden per the
+	%    data request - missing values are not allowed anywhere).
 	%  is_flux=false (ST): end-of-year snapshot, no time bounds
 	%  is_flux=true  (FL): yearly average at mid-year, with time bounds
 	grid_vars = {
@@ -714,9 +718,9 @@ function results=md2ismip7(md,directoryname,source_id,ism_id,ism_member_id,forci
 		'orog',        'surface_altitude',                           'm',          results.surface,     false, false;
 		'topg',        'bedrock_altitude',                           'm',          results.bed,         false, false;
 		'base',        '',                                           'm',          results.base,        false, false;
-		'acabf',       'land_ice_surface_specific_mass_balance_flux','kg m-2 s-1', results.smb,         false, true;
-		'libmassbfgr', 'land_ice_basal_specific_mass_balance_flux',  'kg m-2 s-1', results.libmassbfgr, false, true;
-		'libmassbffl', 'land_ice_basal_specific_mass_balance_flux',  'kg m-2 s-1', results.bmb,         false, true;
+		'acabf',       'land_ice_surface_specific_mass_balance_flux','kg m-2 s-1', results.smb,         true,  true;
+		'libmassbfgr', 'land_ice_basal_specific_mass_balance_flux',  'kg m-2 s-1', results.libmassbfgr, true,  true;
+		'libmassbffl', 'land_ice_basal_specific_mass_balance_flux',  'kg m-2 s-1', results.bmb,         true,  true;
 		'dlithkdt',    'tendency_of_land_ice_thickness',             'm s-1',      results.dhdt,        true,  true;
 		'xvelmean',    'land_ice_vertical_mean_x_velocity',          'm s-1',      results.vxmean,      false, false;
 		'yvelmean',    'land_ice_vertical_mean_y_velocity',          'm s-1',      results.vymean,      false, false;
